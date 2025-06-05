@@ -1,0 +1,12 @@
+# Python virtual environment
+venv_micro_atlas/
+
+# Local user data (mock database)
+user_data/
+
+# Streamlit temporary files
+.streamlit/
+__pycache__/
+
+# Environment variables (if you ever put them in a .env file)
+.env
