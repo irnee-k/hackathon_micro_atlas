@@ -3,6 +3,7 @@ import openai
 import os # Make sure these imports are at the very top of your app.py
 import json
 import datetime # For timestamping entries
+import sqlite3
 
 st.set_page_config(layout="centered", page_title="My Micro-Atlas")
 
@@ -160,35 +161,122 @@ def load_user_analyses(username):
             return []
     return [] # Return empty list if file doesn't exist
 
+# Define the database file for SMS messages (must be the same as in webhook_receiver.py)
+SMS_DATABASE_FILE = 'sms_database.db'
+
+def get_sms_messages():
+    """
+    Retrieves all messages from the SQLite SMS database.
+    Messages are ordered by timestamp in descending order (newest first).
+    """
+    conn = None # Initialize conn to None
+    try:
+        conn = sqlite3.connect(SMS_DATABASE_FILE)
+        cursor = conn.cursor()
+        # Select all columns and order by timestamp
+        cursor.execute("SELECT id, sender_number, body, timestamp FROM messages ORDER BY timestamp DESC")
+        messages = cursor.fetchall()
+        return messages
+    except sqlite3.Error as e:
+        # Streamlit error display for database issues
+        st.error(f"Error reading SMS database: {e}")
+        return []
+    finally:
+        # Ensure the connection is closed even if an error occurs
+        if conn:
+            conn.close()
+
 # --- Streamlit UI layout (this is the main part of your app) ---
 st.title("🧠 My Micro-Atlas: Your Personal Learning Map")
 st.write("Paste in your learning summaries (articles, projects, notes) and let AI map your cognitive landscape.")
 
-learning_input = st.text_area(
-    "Paste your learning content here:",
-    "Example: I read an article about 'reinforcement learning from human feedback' (RLHF) and how it's used to align large language models. This builds on my understanding of basic machine learning concepts. I also worked on a project analyzing user sentiment in customer reviews, using Python and NLP techniques. This involved data cleaning and visualization.",
-    height=200
+st.markdown("---") # Visual separator
+st.header("Your SMS Notes")
+st.write("Messages received via SMS are listed below. Select one to analyze with AI.")
+
+sms_messages = get_sms_messages() # Call the new function to get SMS data
+
+if sms_messages:
+    # Create a list of display options for the selectbox
+    # Format: "Timestamp - Sender: Body (first ~70 chars)"
+    sms_options = [
+        f"{msg[3]} - {msg[1]}: {msg[2][:70]}{'...' if len(msg[2]) > 70 else ''}" # msg[3]=timestamp, msg[1]=sender, msg[2]=body
+        for msg in sms_messages
+    ]
+    
+    # Use st.selectbox to allow users to pick an SMS message
+    selected_sms_display = st.selectbox(
+        "Select an SMS note to analyze:",
+        options=sms_options,
+        index=0, # Default to the latest message (which is at index 0 because of DESC order)
+        key="sms_select_box" # Unique key for Streamlit components
+    )
+
+    selected_sms_body = None
+    if selected_sms_display:
+        # Find the original message body based on the selected display text.
+        # We need to iterate through the original `sms_messages` to find the full body.
+        for msg_id, sender, body, timestamp in sms_messages:
+            if f"{timestamp} - {sender}: {body[:70]}{'...' if len(body) > 70 else ''}" == selected_sms_display:
+                selected_sms_body = body
+                break
+
+    if selected_sms_body:
+        st.info(f"**Selected SMS Content:**\n\n{selected_sms_body}") # Show the full selected SMS content
+        
+        # Button to trigger AI analysis with the selected SMS
+        if st.button("Analyze Selected SMS with AI", key="analyze_sms_button"):
+            # Store the selected SMS content in session state to be picked up by the main analysis logic
+            st.session_state.temp_sms_input_for_analysis = selected_sms_body
+            st.rerun() # Rerun the app to trigger the main analysis button's logic
+            
+    else:
+        st.warning("Could not retrieve full SMS message for analysis. Please try sending another SMS.")
+else:
+    st.info("No SMS messages received yet. Send a text to your Twilio number to get started!")
+
+
+st.markdown("---") # Another separator
+
+# Initialize a variable that will hold the actual content for AI analysis.
+# This prioritizes content from a selected SMS if the "Analyze SMS" button was just clicked.
+active_learning_input = ""
+
+# Check if an SMS was just selected via the "Analyze Selected SMS with AI" button
+if 'temp_sms_input_for_analysis' in st.session_state and st.session_state.temp_sms_input_for_analysis:
+    active_learning_input = st.session_state.temp_sms_input_for_analysis
+    # Clear this session state variable immediately after using it to prevent sticky behavior
+    del st.session_state.temp_sms_input_for_analysis 
+    
+# Display the main text area. Its initial 'value' will be the selected SMS or the default example.
+learning_input_text_area = st.text_area(
+    "Paste your learning content here (or select an SMS above):",
+    value=active_learning_input if active_learning_input else "Example: I read an article about 'reinforcement learning from human feedback' (RLHF) and how it's used to align large language models. This builds on my understanding of basic machine learning concepts. I also worked on a project analyzing user sentiment in customer reviews, using Python and NLP techniques. This involved data cleaning and visualization.",
+    height=200,
+    key="main_text_area" # Add a unique key for this component
 )
+
+# If no SMS was selected via its button, the primary input for analysis comes from the text area.
+if not active_learning_input:
+    active_learning_input = learning_input_text_area
 
 # --- Button click logic (call the function here) ---
 if st.button("Generate My Micro-Atlas"):
-    if not learning_input:
+    # Change 'learning_input' to 'active_learning_input' here as well
+    if not active_learning_input:
         st.warning("Please paste some content to analyze!")
     else:
         st.info("Generating your cognitive map...")
         with st.spinner("Analyzing your learning with AI..."):
-            ai_analysis_output = get_micro_atlas_analysis(learning_input)
+            ai_analysis_output = get_micro_atlas_analysis(active_learning_input)
             st.subheader("Your AI-Enhanced Learning Snapshot:")
             st.markdown(ai_analysis_output) # Display the AI's response
             # --- New: Save the analysis if user is logged in ---
-            if st.session_state.logged_in: # This check is actually redundant due to st.stop() above, but harmless
-                if save_user_analysis(st.session_state.username, learning_input, ai_analysis_output):
+            if st.session_state.logged_in: 
+                if save_user_analysis(st.session_state.username, active_learning_input, ai_analysis_output):
                     st.success("Analysis saved to your account!")
                 else:
                     st.error("Failed to save analysis.")
-            # else:
-                # This 'else' is unreachable because st.stop() handles non-logged-in users.
-                # st.warning("Log in to save your analysis results!")
 
 st.markdown("---")
 st.caption("Powered by AI and your brilliant mind.")
