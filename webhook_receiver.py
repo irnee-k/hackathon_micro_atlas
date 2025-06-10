@@ -1,6 +1,6 @@
 # webhook_receiver.py - FINAL CORRECT VERSION
 
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from twilio.twiml.messaging_response import MessagingResponse
 import sqlite3
 
@@ -54,6 +54,43 @@ def sms_webhook():
     # Return the response to Twilio, which then sends it as an SMS.
     # We must convert it to a string.
     return str(response)
+
+@app.route("/web_clip", methods=['POST'])
+def web_clip_webhook():
+    print(f"\n--- DEBUG: Incoming Web Clip Request Received! ---")
+    # Web clippers usually send data as JSON
+    if not request.is_json:
+        print("ERROR: Web clip request did not contain JSON data.")
+        return jsonify({"error": "Request must be JSON"}), 400
+
+    data = request.get_json()
+    clipped_url = data.get('url')
+    clipped_text = data.get('text') # Assuming the extension sends 'text' for clipped content
+
+    if not clipped_url or not clipped_text:
+        print("ERROR: Missing 'url' or 'text' in web clip data.")
+        return jsonify({"error": "Missing 'url' or 'text' in request body"}), 400
+
+    print(f"DEBUG: Clipped URL: {clipped_url}")
+    print(f"DEBUG: Clipped Text (first 100 chars): {clipped_text[:100]}...")
+
+    # --- Save the received web clip to our SQLite database ---
+    try:
+        conn = sqlite3.connect(DATABASE_FILE)
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "INSERT INTO web_clips (url, clipped_text) VALUES (?, ?)",
+            (clipped_url, clipped_text)
+        )
+
+        conn.commit()
+        conn.close()
+        print("Web clip successfully saved to database.")
+        return jsonify({"message": "Web clip received and saved!"}), 200
+    except Exception as e:
+        print(f"Error saving web clip to database: {e}")
+        return jsonify({"error": f"Failed to save web clip: {e}"}), 500
 
 # This block allows us to run the server directly from the command line
 if __name__ == "__main__":

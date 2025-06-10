@@ -32,6 +32,17 @@ cursor.execute('''
 
 print("Table 'messages' created successfully (if it didn't already exist).")
 
+# Add this new section for web_clips table
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS web_clips (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        url TEXT NOT NULL,
+        clipped_text TEXT NOT NULL,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+''')
+print("Table 'web_clips' created successfully (if it didn't already exist).")
+
 # Save (commit) the changes to the database file
 conn.commit()
 
