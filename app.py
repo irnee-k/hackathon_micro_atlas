@@ -6,7 +6,13 @@ import datetime
 import sqlite3
 from collections import Counter
 import re
-# Removed: from harvard_mock_catalog import harvard_courses
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv() # This loads the variables from .env
+
+openai_api_key = os.getenv("OPENAI_API_KEY")
 
 st.set_page_config(layout="centered", page_title="My Micro-Atlas")
 
