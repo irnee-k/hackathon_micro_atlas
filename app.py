@@ -4,8 +4,9 @@ import os
 import json
 import datetime
 import sqlite3
-from collections import Counter # New import for counting themes
-import re # New import for regex parsing
+from collections import Counter
+import re
+# Removed: from harvard_mock_catalog import harvard_courses
 
 st.set_page_config(layout="centered", page_title="My Micro-Atlas")
 
@@ -148,34 +149,37 @@ def load_user_analyses(username):
             return []
     return []
 
-# Define the database file for SMS messages (must be the same as in webhook_receiver.py)
-SMS_DATABASE_FILE = 'sms_database.db'
+# Define the database file (must be the same as in webhook_receiver.py)
+DATABASE_FILE = 'sms_database.db' # Renamed for clarity, was SMS_DATABASE_FILE
 
-def get_sms_messages():
+# --- MODIFIED: Renamed and updated function to get all learning inputs ---
+def get_all_learning_inputs():
+    """
+    Retrieves all messages (SMS, Email) and web clips from the SQLite database.
+    Messages are ordered by timestamp in descending order (newest first).
+    """
     conn = None
     try:
-        conn = sqlite3.connect(SMS_DATABASE_FILE)
+        conn = sqlite3.connect(DATABASE_FILE)
         cursor = conn.cursor()
-        cursor.execute("SELECT id, sender_number, body, timestamp FROM messages ORDER BY timestamp DESC")
+
+        # Fetch messages (SMS and Email)
+        cursor.execute("SELECT id, sender_number, body, timestamp, type FROM messages ORDER BY timestamp DESC")
         messages = cursor.fetchall()
-        return messages
+
+        # Fetch web clips
+        cursor.execute("SELECT id, url, clipped_text, timestamp FROM web_clips ORDER BY timestamp DESC")
+        clips = cursor.fetchall()
+
+        return messages, clips
     except sqlite3.Error as e:
-        st.error(f"Error reading SMS database: {e}")
-        return []
+        st.error(f"Error reading database: {e}")
+        return [], []
     finally:
         if conn:
             conn.close()
 
-def get_all_web_clips():
-    conn = sqlite3.connect(SMS_DATABASE_FILE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, url, clipped_text, timestamp FROM web_clips ORDER BY timestamp DESC")
-    clips = cursor.fetchall()
-    conn.close()
-    return clips
-
-
-# --- NEW: Functions for Theme Identification and Recommendations ---
+# --- Functions for Theme Identification and Recommendations ---
 
 def extract_core_concepts_from_analysis(ai_analysis_text):
     """
@@ -223,7 +227,7 @@ def generate_recommendations_with_llm(user_themes):
         return "No specific themes identified yet. Analyze more content to get recommendations!"
 
     themes_str = ", ".join([f"'{t}'" for t in user_themes])
-    
+
     recommendation_prompt = f"""
 Based on the following top learning themes: {themes_str},
 suggest 3-5 hypothetical articles, courses, or projects that would be highly relevant.
@@ -248,11 +252,14 @@ Format your response clearly with numbered bullet points for each suggestion.
                 }
             ],
             temperature=0.7,
-            max_tokens=300 # Adjust as needed
+            max_tokens=600 # Adjust as needed
         )
         return response.choices[0].message.content
     except Exception as e:
         return f"Error generating recommendations: {str(e)}"
+
+# Removed: generate_harvard_course_recommendations function and its import
+
 
 # --- Streamlit UI layout (this is the main part of your app) ---
 st.title("🧠 My Micro-Atlas: Your Personal Learning Map")
@@ -260,20 +267,19 @@ st.write("Paste in your learning summaries (articles, projects, notes) and let A
 
 st.markdown("---")
 st.header("Your Learning Inputs")
-st.write("Select from your SMS messages or web clippings below to analyze with AI, or paste new content directly.")
+# Updated instructions based on our previous discussion about simplified email input
+st.write("To analyze content: select from your SMS messages or web clippings below, or **paste email content (subject and body) or any other text directly into the input box.**")
 
-# --- Fetch both SMS messages and Web Clips ---
-# This block is now inside the logged_in check to ensure it only runs when a user is logged in
+# --- Fetch all learning inputs ---
 if st.session_state.username:
-    all_sms_messages = get_sms_messages()
-    all_web_clips = get_all_web_clips()
+    all_messages, all_web_clips = get_all_learning_inputs()
 
     # Combine all inputs into a single list
     all_inputs = []
-    for msg_id, sender, message, timestamp in all_sms_messages:
+    for msg_id, sender, message, timestamp, msg_type in all_messages:
         all_inputs.append({
             "id": msg_id,
-            "type": "SMS",
+            "type": msg_type.capitalize() if msg_type else "SMS",
             "sender": sender,
             "content": message,
             "timestamp": timestamp
@@ -293,10 +299,20 @@ if st.session_state.username:
     # Create display options for the dropdown
     display_options = ["(Select an input to analyze)"]
     for item in all_inputs:
+        display_str = ""
         if item['type'] == "SMS":
-            display_options.append(f"SMS from {item['sender']} ({item['timestamp']}): {item['content'][:70]}...")
+            display_str = f"SMS from {item['sender']} ({item['timestamp']}): {item['content'][:70]}..."
         elif item['type'] == "Web Clip":
-            display_options.append(f"Web Clip ({item['timestamp']}) - {item['url'].split('//')[-1].split('/')[0]}: {item['content'][:70]}...")
+            display_str = f"Web Clip ({item['timestamp']}) - {item['url'].split('//')[-1].split('/')[0]}: {item['content'][:70]}..."
+        elif item['type'] == "Email":
+            # Attempt to show subject or sender for email
+            first_line = item['content'].split('\n')[0]
+            display_str = f"Email from {item['sender'] or 'Unknown'} ({item['timestamp']}): {first_line[:70]}..."
+            if "Subject: " in first_line:
+                # If content starts with "Subject: " assume it was combined
+                display_str = f"Email: {first_line.replace('Subject: ', '')[:70]}... ({item['timestamp']})"
+        display_options.append(display_str)
+
 
     # --- Update the dropdown selection ---
     selected_input_display = st.selectbox(
@@ -314,6 +330,11 @@ if st.session_state.username:
                 item_display_string = f"SMS from {item['sender']} ({item['timestamp']}): {item['content'][:70]}..."
             elif item['type'] == "Web Clip":
                 item_display_string = f"Web Clip ({item['timestamp']}) - {item['url'].split('//')[-1].split('/')[0]}: {item['content'][:70]}..."
+            elif item['type'] == "Email":
+                first_line = item['content'].split('\n')[0]
+                item_display_string = f"Email from {item['sender'] or 'Unknown'} ({item['timestamp']}): {first_line[:70]}..."
+                if "Subject: " in first_line:
+                    item_display_string = f"Email: {first_line.replace('Subject: ', '')[:70]}... ({item['timestamp']})"
 
             if item_display_string == selected_input_display:
                 selected_input_content = item['content']
@@ -329,10 +350,9 @@ active_learning_input = st.text_area(
     "Paste your learning content here (or select from history):",
     value=st.session_state.learning_input_text_area_content,
     height=200,
-    key="unified_main_learning_input_text_area" # New, unique key
+    key="unified_main_learning_input_text_area"
 )
 
-# Store the current content of the text area back into session state for persistence
 st.session_state.learning_input_text_area_content = active_learning_input
 
 # --- Button click logic (call the function here) ---
@@ -373,11 +393,12 @@ if st.session_state.logged_in:
     else:
         st.info("No saved analyses yet. Generate one to see your history!")
 
-    # --- NEW SECTIONS: Top Learning Themes and Recommendations ---
+    # --- NEW SECTIONS: Top Learning Themes and General Recommendations ---
     st.markdown("---")
     st.header("Your Top Learning Themes")
     with st.spinner("Identifying your top themes..."):
         user_top_themes = get_user_theme_profile(st.session_state.username)
+        st.session_state.user_top_themes = user_top_themes # Store themes in session_state
 
     if user_top_themes:
         st.write("Based on your past analyses, your most prominent learning interests include:")
@@ -390,3 +411,5 @@ if st.session_state.logged_in:
     with st.spinner("Generating personalized recommendations..."):
         recommendations = generate_recommendations_with_llm(user_top_themes)
         st.markdown(recommendations)
+
+# Removed: Harvard Course Recommendations section
