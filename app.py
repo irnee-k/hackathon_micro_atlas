@@ -75,7 +75,7 @@ if not st.session_state.logged_in:
 
 
 # --- Database Connection and Fetching Functions (for Supabase) ---
-@st.cache_resource
+#@st.cache_resource
 def get_supabase_connection_streamlit():
     """Establishes and returns a connection to the Supabase PostgreSQL database for Streamlit."""
     try:
@@ -410,3 +410,42 @@ if st.session_state.logged_in:
     with st.spinner("Generating personalized recommendations..."):
         recommendations = generate_recommendations_with_llm(user_top_themes)
         st.markdown(recommendations)
+
+
+# ... (rest of your app.py) ...
+
+def fetch_notes_from_database():
+    """Fetches all notes from the Supabase user_notes table."""
+    conn = None # Initialize conn to None
+    cur = None  # Initialize cur to None
+
+    try:
+        conn = get_supabase_connection_streamlit()
+        if conn is None:
+            return pd.DataFrame() # Return empty DataFrame on connection error
+
+        cur = conn.cursor()
+        cur.execute("SELECT id, created_at, content, summary, sentiment, keywords FROM user_notes ORDER BY created_at DESC;")
+        rows = cur.fetchall()
+        column_names = [desc[0] for desc in cur.description]
+
+        notes_data = []
+        for row in rows:
+            note_dict = dict(zip(column_names, row))
+            if note_dict['keywords'] is None:
+                note_dict['keywords'] = []
+            notes_data.append(note_dict)
+
+        return pd.DataFrame(notes_data)
+
+    except Exception as e:
+        st.error(f"Error fetching notes from database: {e}")
+        return pd.DataFrame() # Return empty DataFrame on fetch error
+    finally:
+        # Only close if the cursor/connection were successfully created
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+# ... (rest of your app.py) ...
