@@ -91,26 +91,37 @@ def get_supabase_connection_streamlit():
         st.error(f"Error connecting to database: {e}")
         return None
 
-def fetch_notes_from_database():
-    """Fetches all notes from the Supabase user_notes table."""
-    conn = get_supabase_connection_streamlit()
-    if conn is None:
-        return pd.DataFrame() # Return empty DataFrame on connection error
+# Replace your existing fetch_notes_from_database function with this one:
+def fetch_notes_from_database(username): # Add username parameter
+    """Fetches all notes for the given user from the Supabase user_notes table."""
+    conn = None
+    cur = None
 
     try:
+        conn = get_supabase_connection_streamlit()
+        if conn is None:
+            return pd.DataFrame() # Return empty DataFrame on connection error
+
         cur = conn.cursor()
-        # Fetch all columns you need, order by created_at DESC for newest first
-        cur.execute("SELECT id, created_at, content, summary, sentiment, keywords FROM user_notes ORDER BY created_at DESC;")
+        # Modified SELECT query to filter by username
+        cur.execute(
+            "SELECT id, created_at, content, summary, sentiment, keywords FROM user_notes WHERE username = %s ORDER BY created_at DESC;",
+            (username,) # Pass the username as a tuple
+        )
         rows = cur.fetchall()
-        column_names = [desc[0] for desc in cur.description]
+        column_names = [desc[0] for desc in cur.description] # Get column names directly from cursor
 
         notes_data = []
         for row in rows:
             note_dict = dict(zip(column_names, row))
-            # psycopg2 should convert PostgreSQL TEXT[] directly to a Python list of strings.
-            # Ensure it's a list even if None or empty
             if note_dict['keywords'] is None:
                 note_dict['keywords'] = []
+            else:
+                try:
+                    # Keywords are stored as JSON string in DB, need to parse to Python list
+                    note_dict['keywords'] = json.loads(note_dict['keywords'])
+                except json.JSONDecodeError:
+                    note_dict['keywords'] = [] # Handle cases where JSON parsing fails
             notes_data.append(note_dict)
 
         return pd.DataFrame(notes_data)
@@ -119,8 +130,10 @@ def fetch_notes_from_database():
         st.error(f"Error fetching notes from database: {e}")
         return pd.DataFrame() # Return empty DataFrame on fetch error
     finally:
-        if conn:
+        # Only close if the cursor/connection were successfully created
+        if cur:
             cur.close()
+        if conn:
             conn.close()
 
 # --- OLD LOCAL FILE FUNCTIONS (Removed or Adapted) ---
@@ -179,17 +192,22 @@ User's Learning Content to Analyze:
         return f"Error generating analysis: {str(e)}"
 
 # --- Functions for Theme Identification and Recommendations ---
-def get_user_theme_profile_from_db(num_top_themes=5):
+# Ensure `from collections import Counter` is at the top of your app.py
+from collections import Counter
+
+# Replace your existing get_user_theme_profile_from_db function with this one:
+def get_user_theme_profile_from_db(username, num_top_themes=5): # Add username parameter
     """
-    Loads all historical analyses from Supabase and identifies top common themes
+    Loads historical notes for a specific user from Supabase and identifies top common themes
     based on keywords.
     """
-    all_notes_df = fetch_notes_from_database()
+    # Fetch notes for the specific user
+    all_notes_df = fetch_notes_from_database(username) # Pass username here
     if all_notes_df.empty:
         return []
 
     all_keywords = []
-    # Ensure 'keywords' column exists and contains lists
+    # Ensure 'keywords' column exists and contains lists (after JSON parsing in fetch_notes_from_database)
     if 'keywords' in all_notes_df.columns:
         for keywords_list in all_notes_df['keywords'].dropna():
             all_keywords.extend(keywords_list)
@@ -248,13 +266,13 @@ st.markdown("---")
 st.header("Your Learning Inputs")
 st.write("To analyze content: select from your historical notes below, or **paste any other text directly into the input box.**")
 
-# --- Fetch all learning inputs from Supabase ---
-# (Mock user doesn't filter data, fetches all from DB)
-all_notes_df = fetch_notes_from_database()
+# --- Fetch all learning inputs from Supabase for the logged-in user ---
+# Pass the username to filter notes for the currently logged-in user
+all_notes_df = fetch_notes_from_database(st.session_state.username)
 
 display_options = ["(Select an input from history to view analysis)"]
 if not all_notes_df.empty:
-    # Format for display: Timestamp - (Type if you had one in DB) - Content Snippet
+    # Format for display: Timestamp - Content Snippet
     all_notes_df['display_text'] = all_notes_df['created_at'].dt.strftime('%Y-%m-%d %H:%M') + " - " + all_notes_df['content'].str[:70].replace('\n', ' ') + "..."
     display_options.extend(all_notes_df['display_text'].tolist())
 
@@ -283,18 +301,16 @@ else:
 
 
 # --- Unified Text Area for Learning Input ---
-# This text area will show the content of the selected history item or allow new input
 active_learning_input = st.text_area(
     "Paste your learning content here (or select from history):",
     value=st.session_state.learning_input_text_area_content,
     height=200,
     key="unified_main_learning_input_text_area"
 )
-# Update session state if user types new content
 st.session_state.learning_input_text_area_content = active_learning_input
 
 
-# --- "Analyze Note" Button Logic ---
+# --- "Analyze Note" Button Logic (for live analysis within Streamlit) ---
 st.markdown("---")
 if st.button("Analyze Note (Live)"):
     if not active_learning_input.strip():
@@ -302,30 +318,15 @@ if st.button("Analyze Note (Live)"):
     else:
         st.info("Generating your cognitive map...")
         with st.spinner("Analyzing your learning with AI..."):
-            # Call the live analysis function if user explicitly wants to re-analyze/analyze new text
             ai_analysis_output = get_micro_atlas_analysis_live(active_learning_input)
             
-            # For live analysis, we'd also want to extract summary, sentiment, keywords
-            # This requires parsing the full AI analysis output, or making separate AI calls.
-            # For simplicity, we'll just display the full AI output here for live analysis.
-            # If you want to parse these, you'll need new helper functions similar to webhook_receiver's
-            # get_ai_analysis/parse_keywords_response, but specialized for the 'full_analysis_prompt' output.
-            
-            # For now, if you want live analysis, you'll need to update the session state
-            # for summary, sentiment, keywords based on how you extract them from ai_analysis_output
-            # This part can be complex if you only get a single text blob from get_micro_atlas_analysis_live
-            # It might be better to make separate calls for summary, sentiment, keywords here too.
-
             st.subheader("Your AI-Enhanced Learning Snapshot:")
             st.markdown(ai_analysis_output)
-            # st.session_state.current_summary = "Live analysis summary placeholder"
-            # st.session_state.current_sentiment = "Live analysis sentiment placeholder"
-            # st.session_state.current_keywords = ["live", "analysis"]
             
-            # IMPORTANT: For live analysis to save, you'd need to re-implement the save_note_to_database
-            # function here, but it's simpler if all saving happens via the webhook_receiver.
-            # If you enable saving here, also add a 'username' column to Supabase 'user_notes'
-            # and pass st.session_state.username to the save function.
+            # If you want this live analysis to also be saved to Supabase,
+            # you would need to call a save function here, passing
+            # active_learning_input, parsed analysis, and st.session_state.username.
+            # For now, we are assuming saving happens via webhooks (email/sms/webclip).
 
 
 # --- Display Analysis Results (pre-computed from DB or live-computed) ---
@@ -337,11 +338,9 @@ if st.session_state.learning_input_text_area_content:
     col1, col2 = st.columns(2)
     with col1:
         st.write("**Summary:**")
-        # Display summary from session state
         st.success(st.session_state.current_summary if st.session_state.current_summary else "No summary available.")
     with col2:
         st.write("**Sentiment:**")
-        # Display sentiment from session state
         st.info(st.session_state.current_sentiment if st.session_state.current_sentiment else "No sentiment available.")
 
     st.write("**Keywords:**")
@@ -357,17 +356,14 @@ st.markdown("---")
 st.caption("Powered by AI and your brilliant mind.")
 
 
-# --- Display User History (from Supabase) ---
-if st.session_state.logged_in:
+# --- Display User History (from Supabase, now user-filtered) ---
+if st.session_state.logged_in: # This block is already within the logged-in check
     st.markdown("---")
-    st.header(f"All Historical Notes") # Renamed since it's not per-user filtered yet
+    # Updated header to reflect user-specific data
+    st.header(f"Your Historical Notes ({st.session_state.username})") 
 
-    # Re-fetch just for the display history, or use the already fetched all_notes_df
-    # We'll re-use all_notes_df from earlier for efficiency
+    # all_notes_df is already fetched for the current user at the top of this block
     if not all_notes_df.empty:
-        # Display the DataFrame if you want, or just iterate and show expanders
-        st.dataframe(all_notes_df[['created_at', 'content', 'summary', 'sentiment', 'keywords']])
-
         # Example of iterating through notes and displaying in expanders
         st.subheader("Details from History:")
         for index, entry in all_notes_df.iterrows():
@@ -384,19 +380,20 @@ if st.session_state.logged_in:
                 st.info(entry['sentiment'])
                 st.write("**Keywords:**")
                 if entry['keywords']:
+                    # Ensure keywords are correctly displayed as a comma-separated string
                     st.code(", ".join(entry['keywords']))
                 else:
                     st.write("No keywords.")
     else:
-        st.info("No saved notes yet in Supabase. Send an email/SMS/web clip via your Flask app to populate!")
+        st.info(f"No saved notes yet in Supabase for user '{st.session_state.username}'. Send an email/SMS/web clip via your Flask app to populate!")
 
 
     # --- NEW SECTIONS: Top Learning Themes and General Recommendations ---
     st.markdown("---")
     st.header("Your Top Learning Themes")
     with st.spinner("Identifying your top themes..."):
-        # This now gets themes from all notes in Supabase
-        user_top_themes = get_user_theme_profile_from_db()
+        # This now gets themes only for the logged-in user
+        user_top_themes = get_user_theme_profile_from_db(st.session_state.username) # Pass username here
         st.session_state.user_top_themes = user_top_themes # Store themes in session_state
 
     if user_top_themes:
@@ -408,44 +405,6 @@ if st.session_state.logged_in:
     st.markdown("---")
     st.header("Content Recommendations for You")
     with st.spinner("Generating personalized recommendations..."):
-        recommendations = generate_recommendations_with_llm(user_top_themes)
+        # This function uses user_top_themes which is now user-specific
+        recommendations = generate_recommendations_with_llm(st.session_state.user_top_themes)
         st.markdown(recommendations)
-
-
-# ... (rest of your app.py) ...
-
-def fetch_notes_from_database():
-    """Fetches all notes from the Supabase user_notes table."""
-    conn = None # Initialize conn to None
-    cur = None  # Initialize cur to None
-
-    try:
-        conn = get_supabase_connection_streamlit()
-        if conn is None:
-            return pd.DataFrame() # Return empty DataFrame on connection error
-
-        cur = conn.cursor()
-        cur.execute("SELECT id, created_at, content, summary, sentiment, keywords FROM user_notes ORDER BY created_at DESC;")
-        rows = cur.fetchall()
-        column_names = [desc[0] for desc in cur.description]
-
-        notes_data = []
-        for row in rows:
-            note_dict = dict(zip(column_names, row))
-            if note_dict['keywords'] is None:
-                note_dict['keywords'] = []
-            notes_data.append(note_dict)
-
-        return pd.DataFrame(notes_data)
-
-    except Exception as e:
-        st.error(f"Error fetching notes from database: {e}")
-        return pd.DataFrame() # Return empty DataFrame on fetch error
-    finally:
-        # Only close if the cursor/connection were successfully created
-        if cur:
-            cur.close()
-        if conn:
-            conn.close()
-
-# ... (rest of your app.py) ...
