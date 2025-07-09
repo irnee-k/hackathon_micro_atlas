@@ -6,7 +6,7 @@ import datetime
 import re
 import psycopg2
 import pandas as pd
-from collections import Counter # Ensure this import is present
+from collections import Counter
 
 from dotenv import load_dotenv
 
@@ -40,7 +40,6 @@ if 'learning_input_text_area_content' not in st.session_state:
 # Initialize analysis results in session state
 if 'current_summary' not in st.session_state:
     st.session_state.current_summary = ""
-# Removed 'current_sentiment' from session state initialization
 if 'current_keywords' not in st.session_state:
     st.session_state.current_keywords = []
 
@@ -101,7 +100,6 @@ def fetch_notes_from_database(username):
             return pd.DataFrame()
 
         cur = conn.cursor()
-        # Removed 'sentiment' from the SELECT query
         cur.execute(
             "SELECT id, created_at, content, summary, keywords, timestamp FROM user_notes WHERE username = %s ORDER BY created_at DESC;",
             (username,)
@@ -111,9 +109,16 @@ def fetch_notes_from_database(username):
 
         notes_data = []
         for row in rows:
-            note_dict = dict(zip(column_names, row))
-            if note_dict['keywords'] is None:
-                note_dict['keywords'] = []
+            note_id, created_at, content, summary, keywords_data, timestamp = row
+            
+            note_dict = {
+                "id": note_id,
+                "created_at": created_at,
+                "content": content,
+                "summary": summary,
+                "keywords": keywords_data if keywords_data is not None else [],
+                "timestamp": timestamp
+            }
             notes_data.append(note_dict)
 
         return pd.DataFrame(notes_data)
@@ -151,7 +156,7 @@ User's Learning Content to Analyze:
 """
     try:
         response = openai.chat.completions.create(
-            model="gpt-3.5-turbo", # Or "gpt-4o" if you have access and prefer
+            model="gpt-3.5-turbo",
             messages=[
                 {
                     "role": "system",
@@ -258,13 +263,11 @@ if selected_input_display != "(Select an input from history to view analysis)":
     
     st.session_state.learning_input_text_area_content = selected_note_data['content']
     st.session_state.current_summary = selected_note_data['summary']
-    # Removed st.session_state.current_sentiment update
     st.session_state.current_keywords = selected_note_data['keywords']
 else:
     # Reset display if default option selected
     if 'current_summary' in st.session_state:
         st.session_state.current_summary = ""
-        # Removed st.session_state.current_sentiment reset
         st.session_state.current_keywords = []
 
 
@@ -290,13 +293,8 @@ if st.button("Analyze Note (Live)"):
             
             # --- Display Summary and Keywords (Moved to top of analysis results) ---
             st.subheader("Quick Analysis:")
-            col1, col2 = st.columns(2) # Still using 2 columns, but one will be empty
-            with col1:
-                st.write("**Summary:**")
-                st.success(st.session_state.current_summary if st.session_state.current_summary else "No summary available.")
-            with col2: # This column will now be empty or could be removed if only 1 column is desired
-                # Removed sentiment display from here
-                pass
+            st.write("**Summary:**") # Directly placed, no columns
+            st.success(st.session_state.current_summary if st.session_state.current_summary else "No summary available.")
 
             st.write("**Keywords:**")
             if st.session_state.current_keywords:
@@ -318,13 +316,8 @@ if st.button("Analyze Note (Live)"):
 st.subheader("Analysis Results")
 if st.session_state.learning_input_text_area_content and not st.session_state.current_summary: # Only show if content is loaded but not live-analyzed
     st.subheader("Quick Analysis:")
-    col1, col2 = st.columns(2) # Still using 2 columns, but one will be empty
-    with col1:
-        st.write("**Summary:**")
-        st.success(st.session_state.current_summary if st.session_state.current_summary else "No summary available.")
-    with col2: # This column will now be empty or could be removed if only 1 column is desired
-        # Removed sentiment display from here
-        pass
+    st.write("**Summary:**") # Directly placed, no columns
+    st.success(st.session_state.current_summary if st.session_state.current_summary else "No summary available.")
 
     st.write("**Keywords:**")
     if st.session_state.current_keywords:
@@ -375,7 +368,6 @@ if st.session_state.logged_in: # This block is already within the logged-in chec
                 st.info(entry['content'])
                 st.write("**Summary:**")
                 st.success(entry['summary'])
-                # Removed sentiment display from here
                 st.write("**Keywords:**")
                 if entry['keywords']:
                     st.code(", ".join(entry['keywords']))
