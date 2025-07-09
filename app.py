@@ -40,8 +40,7 @@ if 'learning_input_text_area_content' not in st.session_state:
 # Initialize analysis results in session state
 if 'current_summary' not in st.session_state:
     st.session_state.current_summary = ""
-if 'current_sentiment' not in st.session_state:
-    st.session_state.current_sentiment = ""
+# Removed 'current_sentiment' from session state initialization
 if 'current_keywords' not in st.session_state:
     st.session_state.current_keywords = []
 
@@ -102,8 +101,9 @@ def fetch_notes_from_database(username):
             return pd.DataFrame()
 
         cur = conn.cursor()
+        # Removed 'sentiment' from the SELECT query
         cur.execute(
-            "SELECT id, created_at, content, summary, sentiment, keywords FROM user_notes WHERE username = %s ORDER BY created_at DESC;",
+            "SELECT id, created_at, content, summary, keywords, timestamp FROM user_notes WHERE username = %s ORDER BY created_at DESC;",
             (username,)
         )
         rows = cur.fetchall()
@@ -114,7 +114,6 @@ def fetch_notes_from_database(username):
             note_dict = dict(zip(column_names, row))
             if note_dict['keywords'] is None:
                 note_dict['keywords'] = []
-            # No 'else' block needed here for keywords, as psycopg2 handles TEXT[] to list conversion
             notes_data.append(note_dict)
 
         return pd.DataFrame(notes_data)
@@ -259,13 +258,13 @@ if selected_input_display != "(Select an input from history to view analysis)":
     
     st.session_state.learning_input_text_area_content = selected_note_data['content']
     st.session_state.current_summary = selected_note_data['summary']
-    st.session_state.current_sentiment = selected_note_data['sentiment']
+    # Removed st.session_state.current_sentiment update
     st.session_state.current_keywords = selected_note_data['keywords']
 else:
     # Reset display if default option selected
     if 'current_summary' in st.session_state:
         st.session_state.current_summary = ""
-        st.session_state.current_sentiment = ""
+        # Removed st.session_state.current_sentiment reset
         st.session_state.current_keywords = []
 
 
@@ -291,13 +290,13 @@ if st.button("Analyze Note (Live)"):
             
             # --- Display Summary and Keywords (Moved to top of analysis results) ---
             st.subheader("Quick Analysis:")
-            col1, col2 = st.columns(2)
+            col1, col2 = st.columns(2) # Still using 2 columns, but one will be empty
             with col1:
                 st.write("**Summary:**")
                 st.success(st.session_state.current_summary if st.session_state.current_summary else "No summary available.")
-            with col2:
-                st.write("**Sentiment:**")
-                st.info(st.session_state.current_sentiment if st.session_state.current_sentiment else "No sentiment available.")
+            with col2: # This column will now be empty or could be removed if only 1 column is desired
+                # Removed sentiment display from here
+                pass
 
             st.write("**Keywords:**")
             if st.session_state.current_keywords:
@@ -319,13 +318,13 @@ if st.button("Analyze Note (Live)"):
 st.subheader("Analysis Results")
 if st.session_state.learning_input_text_area_content and not st.session_state.current_summary: # Only show if content is loaded but not live-analyzed
     st.subheader("Quick Analysis:")
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2) # Still using 2 columns, but one will be empty
     with col1:
         st.write("**Summary:**")
         st.success(st.session_state.current_summary if st.session_state.current_summary else "No summary available.")
-    with col2:
-        st.write("**Sentiment:**")
-        st.info(st.session_state.current_sentiment if st.session_state.current_sentiment else "No sentiment available.")
+    with col2: # This column will now be empty or could be removed if only 1 column is desired
+        # Removed sentiment display from here
+        pass
 
     st.write("**Keywords:**")
     if st.session_state.current_keywords:
@@ -376,8 +375,7 @@ if st.session_state.logged_in: # This block is already within the logged-in chec
                 st.info(entry['content'])
                 st.write("**Summary:**")
                 st.success(entry['summary'])
-                st.write("**Sentiment:**")
-                st.info(entry['sentiment'])
+                # Removed sentiment display from here
                 st.write("**Keywords:**")
                 if entry['keywords']:
                     st.code(", ".join(entry['keywords']))
