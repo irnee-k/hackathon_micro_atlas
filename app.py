@@ -116,12 +116,7 @@ def fetch_notes_from_database(username): # Add username parameter
             note_dict = dict(zip(column_names, row))
             if note_dict['keywords'] is None:
                 note_dict['keywords'] = []
-            else:
-                try:
-                    # Keywords are stored as JSON string in DB, need to parse to Python list
-                    note_dict['keywords'] = json.loads(note_dict['keywords'])
-                except json.JSONDecodeError:
-                    note_dict['keywords'] = [] # Handle cases where JSON parsing fails
+
             notes_data.append(note_dict)
 
         return pd.DataFrame(notes_data)
@@ -408,3 +403,4 @@ if st.session_state.logged_in: # This block is already within the logged-in chec
         # This function uses user_top_themes which is now user-specific
         recommendations = generate_recommendations_with_llm(st.session_state.user_top_themes)
         st.markdown(recommendations)
+
