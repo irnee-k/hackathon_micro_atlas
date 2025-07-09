@@ -1,11 +1,12 @@
 import streamlit as st
 import openai
 import os
-import json # Still needed for user_data.json login/logout if you keep it
+import json
 import datetime
 import re
-import psycopg2 # For connecting to PostgreSQL/Supabase
-import pandas as pd # Good for displaying fetched data
+import psycopg2
+import pandas as pd
+from collections import Counter # Ensure this import is present
 
 from dotenv import load_dotenv
 
@@ -75,7 +76,6 @@ if not st.session_state.logged_in:
 
 
 # --- Database Connection and Fetching Functions (for Supabase) ---
-#@st.cache_resource
 def get_supabase_connection_streamlit():
     """Establishes and returns a connection to the Supabase PostgreSQL database for Streamlit."""
     try:
@@ -91,8 +91,7 @@ def get_supabase_connection_streamlit():
         st.error(f"Error connecting to database: {e}")
         return None
 
-# Replace your existing fetch_notes_from_database function with this one:
-def fetch_notes_from_database(username): # Add username parameter
+def fetch_notes_from_database(username):
     """Fetches all notes for the given user from the Supabase user_notes table."""
     conn = None
     cur = None
@@ -100,49 +99,36 @@ def fetch_notes_from_database(username): # Add username parameter
     try:
         conn = get_supabase_connection_streamlit()
         if conn is None:
-            return pd.DataFrame() # Return empty DataFrame on connection error
+            return pd.DataFrame()
 
         cur = conn.cursor()
-        # Modified SELECT query to filter by username
         cur.execute(
             "SELECT id, created_at, content, summary, sentiment, keywords FROM user_notes WHERE username = %s ORDER BY created_at DESC;",
-            (username,) # Pass the username as a tuple
+            (username,)
         )
         rows = cur.fetchall()
-        column_names = [desc[0] for desc in cur.description] # Get column names directly from cursor
+        column_names = [desc[0] for desc in cur.description]
 
         notes_data = []
         for row in rows:
             note_dict = dict(zip(column_names, row))
             if note_dict['keywords'] is None:
                 note_dict['keywords'] = []
-
+            # No 'else' block needed here for keywords, as psycopg2 handles TEXT[] to list conversion
             notes_data.append(note_dict)
 
         return pd.DataFrame(notes_data)
 
     except Exception as e:
         st.error(f"Error fetching notes from database: {e}")
-        return pd.DataFrame() # Return empty DataFrame on fetch error
+        return pd.DataFrame()
     finally:
-        # Only close if the cursor/connection were successfully created
         if cur:
             cur.close()
         if conn:
             conn.close()
 
-# --- OLD LOCAL FILE FUNCTIONS (Removed or Adapted) ---
-# save_user_analysis and load_user_analyses are for local JSON files and are effectively replaced by Supabase
-# If you want user-specific history within the Supabase table, you'd need a 'username' column in user_notes
-# and filter by it during fetch. For now, we're fetching ALL user_notes.
-# If you want to keep per-user history, you need to add a 'username' column to your Supabase table.
-# For simplicity, assuming 'user_notes' stores all notes regardless of mock user.
-# If 'username' is critical for filtering, you'd add it to 'user_notes' table and
-# modify save_note_to_database() and fetch_notes_from_database() to include it.
-
-# --- Define the AI Analysis Function (if you want live analysis in Streamlit) ---
-# Keeping this for now, but note that the primary AI analysis happens in webhook_receiver.py
-# when data is first ingested. This would be for manual "analyze now" in Streamlit.
+# --- Define the AI Analysis Function (for live analysis in Streamlit) ---
 def get_micro_atlas_analysis_live(text_input):
     user_prompt_content = f"""
 You are an expert knowledge curator and cognitive cartographer, helping individuals map their learning journey.
@@ -150,9 +136,7 @@ Your task is to analyze the following unstructured text, which describes a user'
 From this text, you need to extract and categorize the following key elements of their knowledge landscape:
 
 1.  **Core Concepts & Topics:** Identify the main subject matters or abstract ideas discussed.
-2.  **Key Skills & Technologies:** List any specific practical abilities or tools (e.g., programming languages, software, methodologies) mentioned or clearly implied as being used or learned.
-3.  **Cross-Cutting Competencies:** Identify broader, transferable skills demonstrated (e.g., Problem Solving, Data Analysis, Communication, Project Management, Critical Thinking, Leadership, User Research).
-4.  **Noteworthy Connections & Insights:** Describe any explicit or implicit relationships you find between the concepts, skills, or competencies. This is where you connect disparate pieces of learning.
+2.  **Noteworthy Connections & Insights:** Describe any explicit or implicit relationships you find between the concepts. This is where you connect disparate pieces of learning.
 
 **Instructions for Formatting the Output:**
 - Use clear, concise language.
@@ -187,29 +171,21 @@ User's Learning Content to Analyze:
         return f"Error generating analysis: {str(e)}"
 
 # --- Functions for Theme Identification and Recommendations ---
-# Ensure `from collections import Counter` is at the top of your app.py
-from collections import Counter
-
-# Replace your existing get_user_theme_profile_from_db function with this one:
-def get_user_theme_profile_from_db(username, num_top_themes=5): # Add username parameter
+def get_user_theme_profile_from_db(username, num_top_themes=5):
     """
     Loads historical notes for a specific user from Supabase and identifies top common themes
     based on keywords.
     """
-    # Fetch notes for the specific user
-    all_notes_df = fetch_notes_from_database(username) # Pass username here
+    all_notes_df = fetch_notes_from_database(username)
     if all_notes_df.empty:
         return []
 
     all_keywords = []
-    # Ensure 'keywords' column exists and contains lists (after JSON parsing in fetch_notes_from_database)
     if 'keywords' in all_notes_df.columns:
         for keywords_list in all_notes_df['keywords'].dropna():
             all_keywords.extend(keywords_list)
 
-    # Count the frequency of each keyword
     keyword_counts = Counter(all_keywords)
-    # Get the most common themes/keywords
     top_themes = [theme for theme, count in keyword_counts.most_common(num_top_themes)]
     return top_themes
 
@@ -234,7 +210,7 @@ Format your response clearly with numbered bullet points for each suggestion.
 """
     try:
         response = openai.chat.completions.create(
-            model="gpt-3.5-turbo", # Use the same model as your main analysis
+            model="gpt-3.5-turbo",
             messages=[
                 {
                     "role": "system",
@@ -246,7 +222,7 @@ Format your response clearly with numbered bullet points for each suggestion.
                 }
             ],
             temperature=0.7,
-            max_tokens=600 # Adjust as needed
+            max_tokens=600
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -262,12 +238,10 @@ st.header("Your Learning Inputs")
 st.write("To analyze content: select from your historical notes below, or **paste any other text directly into the input box.**")
 
 # --- Fetch all learning inputs from Supabase for the logged-in user ---
-# Pass the username to filter notes for the currently logged-in user
 all_notes_df = fetch_notes_from_database(st.session_state.username)
 
 display_options = ["(Select an input from history to view analysis)"]
 if not all_notes_df.empty:
-    # Format for display: Timestamp - Content Snippet
     all_notes_df['display_text'] = all_notes_df['created_at'].dt.strftime('%Y-%m-%d %H:%M') + " - " + all_notes_df['content'].str[:70].replace('\n', ' ') + "..."
     display_options.extend(all_notes_df['display_text'].tolist())
 
@@ -315,6 +289,22 @@ if st.button("Analyze Note (Live)"):
         with st.spinner("Analyzing your learning with AI..."):
             ai_analysis_output = get_micro_atlas_analysis_live(active_learning_input)
             
+            # --- Display Summary and Keywords (Moved to top of analysis results) ---
+            st.subheader("Quick Analysis:")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Summary:**")
+                st.success(st.session_state.current_summary if st.session_state.current_summary else "No summary available.")
+            with col2:
+                st.write("**Sentiment:**")
+                st.info(st.session_state.current_sentiment if st.session_state.current_sentiment else "No sentiment available.")
+
+            st.write("**Keywords:**")
+            if st.session_state.current_keywords:
+                st.code(", ".join(st.session_state.current_keywords))
+            else:
+                st.write("No keywords extracted.")
+            
             st.subheader("Your AI-Enhanced Learning Snapshot:")
             st.markdown(ai_analysis_output)
             
@@ -325,11 +315,10 @@ if st.button("Analyze Note (Live)"):
 
 
 # --- Display Analysis Results (pre-computed from DB or live-computed) ---
+# This section now only displays if content is present, without "Original Content"
 st.subheader("Analysis Results")
-if st.session_state.learning_input_text_area_content:
-    st.write("**Original Content:**")
-    st.info(st.session_state.learning_input_text_area_content)
-
+if st.session_state.learning_input_text_area_content and not st.session_state.current_summary: # Only show if content is loaded but not live-analyzed
+    st.subheader("Quick Analysis:")
     col1, col2 = st.columns(2)
     with col1:
         st.write("**Summary:**")
@@ -343,23 +332,39 @@ if st.session_state.learning_input_text_area_content:
         st.code(", ".join(st.session_state.current_keywords))
     else:
         st.write("No keywords extracted.")
-
 else:
-    st.info("Enter text above or select from history to see analysis.")
+    if not st.session_state.learning_input_text_area_content:
+        st.info("Enter text above or select from history to see analysis.")
 
 st.markdown("---")
 st.caption("Powered by AI and your brilliant mind.")
 
 
-# --- Display User History (from Supabase, now user-filtered) ---
+# --- NEW SECTIONS: Top Learning Themes and General Recommendations ---
 if st.session_state.logged_in: # This block is already within the logged-in check
     st.markdown("---")
-    # Updated header to reflect user-specific data
+    st.header("Your Top Learning Themes")
+    with st.spinner("Identifying your top themes..."):
+        user_top_themes = get_user_theme_profile_from_db(st.session_state.username)
+        st.session_state.user_top_themes = user_top_themes
+
+    if user_top_themes:
+        st.write("Based on your past analyses, your most prominent learning interests include:")
+        st.markdown(", ".join([f"**{theme}**" for theme in user_top_themes]))
+    else:
+        st.info("Analyze more content to build your learning theme profile!")
+
+    st.markdown("---")
+    st.header("Content Recommendations for You")
+    with st.spinner("Generating personalized recommendations..."):
+        recommendations = generate_recommendations_with_llm(st.session_state.user_top_themes)
+        st.markdown(recommendations)
+
+    # --- Display User History (from Supabase, now user-filtered) ---
+    st.markdown("---")
     st.header(f"Your Historical Notes ({st.session_state.username})") 
 
-    # all_notes_df is already fetched for the current user at the top of this block
     if not all_notes_df.empty:
-        # Example of iterating through notes and displaying in expanders
         st.subheader("Details from History:")
         for index, entry in all_notes_df.iterrows():
             expander_title = f"Note from {entry['created_at'].strftime('%Y-%m-%d %H:%M:%S')}"
@@ -375,32 +380,8 @@ if st.session_state.logged_in: # This block is already within the logged-in chec
                 st.info(entry['sentiment'])
                 st.write("**Keywords:**")
                 if entry['keywords']:
-                    # Ensure keywords are correctly displayed as a comma-separated string
                     st.code(", ".join(entry['keywords']))
                 else:
                     st.write("No keywords.")
     else:
         st.info(f"No saved notes yet in Supabase for user '{st.session_state.username}'. Send an email/SMS/web clip via your Flask app to populate!")
-
-
-    # --- NEW SECTIONS: Top Learning Themes and General Recommendations ---
-    st.markdown("---")
-    st.header("Your Top Learning Themes")
-    with st.spinner("Identifying your top themes..."):
-        # This now gets themes only for the logged-in user
-        user_top_themes = get_user_theme_profile_from_db(st.session_state.username) # Pass username here
-        st.session_state.user_top_themes = user_top_themes # Store themes in session_state
-
-    if user_top_themes:
-        st.write("Based on your past analyses, your most prominent learning interests include:")
-        st.markdown(", ".join([f"**{theme}**" for theme in user_top_themes]))
-    else:
-        st.info("Analyze more content to build your learning theme profile!")
-
-    st.markdown("---")
-    st.header("Content Recommendations for You")
-    with st.spinner("Generating personalized recommendations..."):
-        # This function uses user_top_themes which is now user-specific
-        recommendations = generate_recommendations_with_llm(st.session_state.user_top_themes)
-        st.markdown(recommendations)
-
